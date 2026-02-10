@@ -7,5 +7,5 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 
-# Keep dataset CSV files in version control
-!data/**/*.csv
+# Ignore local dataset files
+data/**/*.csv
