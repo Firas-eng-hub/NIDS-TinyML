@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NIDS Dashboard</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        background: #f5f7fb;
+        color: #222;
+      }
+      header {
+        background: #1f2a44;
+        color: #fff;
+        padding: 16px 24px;
+      }
+      .container {
+        padding: 24px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .card {
+        background: #fff;
+        padding: 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      }
+      .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      label {
+        font-size: 14px;
+        color: #555;
+      }
+      select, input {
+        padding: 6px 8px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      }
+      th, td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #eee;
+        text-align: left;
+        font-size: 14px;
+      }
+      th {
+        background: #f0f3f9;
+      }
+      .muted {
+        color: #666;
+        font-size: 12px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <header>
+      <h2>NIDS Alerts Dashboard</h2>
+    </header>
+    <div class="container">
+      <div class="cards">
+        <div class="card">
+          <h3>Total Alerts</h3>
+          <div id="totalAlerts" style="font-size: 28px;">0</div>
+          <div class="muted">All classes</div>
+        </div>
+        <div class="card">
+          <h3>Alerts by Class</h3>
+          <canvas id="alertsChart" height="120"></canvas>
+        </div>
+      </div>
+
+      <div class="filters">
+        <div>
+          <label for="classFilter">Class</label><br />
+          <select id="classFilter">
+            <option value="">All</option>
+            <option value="Normal">Normal</option>
+            <option value="DoS">DoS</option>
+            <option value="BruteForce">BruteForce</option>
+            <option value="Botnet">Botnet</option>
+            <option value="WebAttack">WebAttack</option>
+          </select>
+        </div>
+        <div>
+          <label for="minConfidence">Min Confidence</label><br />
+          <input id="minConfidence" type="number" step="0.01" min="0" max="1" value="0" />
+        </div>
+        <div>
+          <label>&nbsp;</label><br />
+          <button id="refreshBtn">Refresh</button>
+        </div>
+      </div>
+
+      <h3>Recent Alerts</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Class</th>
+            <th>Confidence</th>
+            <th>Flow ID</th>
+            <th>Key Features</th>
+          </tr>
+        </thead>
+        <tbody id="alertsTable"></tbody>
+      </table>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+  </body>
+</html>

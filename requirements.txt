@@ -1,0 +1,9 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+flask
+requests
+pyyaml
+joblib
+xgboost==2.1.4

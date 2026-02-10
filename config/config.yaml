@@ -1,0 +1,64 @@
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  chunksize: 200000
+  max_rows: 0
+  sample_frac: 1.0
+split:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+features:
+  log1p_skew_threshold: 1.0
+  fixed_list:
+    - Flow Duration
+    - Tot Fwd Pkts
+    - Tot Bwd Pkts
+    - TotLen Fwd Pkts
+    - TotLen Bwd Pkts
+    - Fwd Pkt Len Max
+    - Bwd Pkt Len Max
+    - Pkt Len Min
+    - Pkt Len Max
+    - SYN Flag Cnt
+    - RST Flag Cnt
+    - ACK Flag Cnt
+    - PSH Flag Cnt
+    - Down/Up Ratio
+    - Flow Pkts/s
+train:
+  model_type: logistic_regression
+  rf_n_estimators: 200
+  rf_max_depth: 20
+  rf_min_samples_leaf: 2
+  rf_n_jobs: -1
+  xgb_n_estimators: 300
+  xgb_max_depth: 8
+  xgb_learning_rate: 0.1
+  xgb_subsample: 0.8
+  xgb_colsample_bytree: 0.8
+  xgb_min_child_weight: 1.0
+  xgb_reg_lambda: 1.0
+  xgb_n_jobs: -1
+  xgb_tree_method: hist
+  xgb_verbosity: 1
+  lr_c: 1.0
+  lr_max_iter: 1000
+  lr_solver: lbfgs
+  lr_penalty: l2
+  lr_multi_class: auto
+  lr_n_jobs: -1
+  random_state: 42
+artifacts:
+  models_dir: artifacts/models
+  reports_dir: artifacts/reports
+  scalers_dir: artifacts/scalers
+  metadata_dir: artifacts/metadata
+stream:
+  speed: 5
+  min_confidence: 0.5
+  only_attacks: false
+  batch_size: 1
+dashboard:
+  host: 127.0.0.1
+  port: 5000
