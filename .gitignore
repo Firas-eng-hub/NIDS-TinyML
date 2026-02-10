@@ -7,5 +7,5 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 
-# Ignore local dataset files
-data/**/*.csv
+# Ignore all CSV files
+*.csv
