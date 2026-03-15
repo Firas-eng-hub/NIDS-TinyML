@@ -20,6 +20,23 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 
 
+def _align_proba_columns(y_proba: np.ndarray, model, class_names: List[str]) -> np.ndarray:
+    """Align probability columns to the requested class_names order."""
+    if not hasattr(model, "classes_"):
+        return y_proba
+
+    model_classes = [str(c) for c in model.classes_]
+    class_names = [str(c) for c in class_names]
+    cls_to_idx = {name: idx for idx, name in enumerate(model_classes)}
+    missing = [name for name in class_names if name not in cls_to_idx]
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(f"Model probabilities do not contain expected classes: {missing_text}")
+
+    indices = [cls_to_idx[name] for name in class_names]
+    return y_proba[:, indices]
+
+
 def _plot_multiclass_roc(
     y_true: np.ndarray, y_proba: np.ndarray, class_names: List[str], out_path: str
 ) -> Dict[str, float]:
@@ -79,6 +96,8 @@ def evaluate_model(
 ) -> Dict[str, object]:
     y_pred = model.predict(X)
     y_proba = model.predict_proba(X) if hasattr(model, "predict_proba") else None
+    if y_proba is not None:
+        y_proba = _align_proba_columns(y_proba, model, class_names)
 
     acc = float(accuracy_score(y, y_pred))
     macro_f1 = float(f1_score(y, y_pred, average="macro"))

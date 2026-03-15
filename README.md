@@ -43,6 +43,44 @@ To stream with a specific trained run:
 python -m src.main_stream --run_name rf_run_01 --speed 5
 ```
 
+6. (Optional) Sniff live traffic with Scapy and run model inference
+
+```bash
+python -m src.main_sniff --run_name rf_run_03 --iface "Ethernet" --bpf "tcp or udp" --dashboard
+```
+
+Offline pcap replay:
+
+```bash
+python -m src.main_sniff --run_name rf_run_03 --pcap your_capture.pcap --bpf "tcp or udp"
+```
+
+Export the 15 flow features to CSV in real time while sniffing:
+
+```bash
+python -m src.main_flowmeter_sniff --iface "Wi-Fi" --bpf "tcp or udp" --csv_out data/processed/live_flows_15.csv
+```
+
+Offline pcap replay to CSV:
+
+```bash
+python -m src.main_flowmeter_sniff --pcap your_capture.pcap --bpf "tcp or udp" --csv_out data/processed/live_flows_15.csv
+```
+
+7. (Optional) Run inference on CICFlowMeter flow CSVs
+
+If you already generated a CICFlowMeter flow CSV:
+
+```bash
+python -m src.main_flowmeter --run_name rf_run_03 --flows_csv path\\to\\cic_flow.csv --dashboard
+```
+
+If you want this script to invoke CICFlowMeter on a pcap (example template, adjust to your CICFlowMeter install):
+
+```bash
+python -m src.main_flowmeter --run_name rf_run_03 --pcap capture.pcap --cic_cmd "java -jar C:\\tools\\CICFlowMeter.jar {pcap} {out}" --dashboard
+```
+
 Dashboard: http://127.0.0.1:5000
 
 ## Notes
@@ -59,6 +97,7 @@ Dashboard: http://127.0.0.1:5000
 - The cleaned and processed dataset is saved to `data/processed/processed.csv` to support streaming.
 - Class imbalance is handled with class weights computed from the training split.
 - For `xgboost`, those class weights are converted into per-row `sample_weight` during fitting.
+- `main_sniff` uses Scapy and requires packet-capture privileges (Npcap/administrator on Windows for live sniffing).
 
 ## Config
 

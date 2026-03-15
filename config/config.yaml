@@ -27,7 +27,7 @@ features:
     - Down/Up Ratio
     - Flow Pkts/s
 train:
-  model_type: logistic_regression
+  model_type: random_forest
   rf_n_estimators: 200
   rf_max_depth: 20
   rf_min_samples_leaf: 2
