@@ -1,6 +1,9 @@
 pandas
 numpy
 scikit-learn
+skl2onnx
+onnxruntime
+emlearn
 matplotlib
 flask
 requests
@@ -8,3 +11,4 @@ pyyaml
 joblib
 xgboost==2.1.4
 scapy
+pyserial

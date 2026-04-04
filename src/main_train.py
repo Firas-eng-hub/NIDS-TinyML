@@ -208,7 +208,7 @@ def main():
         "log1p_features": preprocessor["log1p_features"],
         "min_vals": preprocessor["min_vals"],
         "max_vals": preprocessor["max_vals"],
-        "class_names": TARGET_CLASSES,
+        "class_names": [str(name) for name in getattr(model, "classes_", TARGET_CLASSES)],
         "model_type": model_type,
         "train_config": _to_json_safe(cfg["train"]),
         "model_params": _extract_model_params(model),

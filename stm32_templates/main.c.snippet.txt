@@ -1,0 +1,8 @@
+/* Add near the top of main.c */
+#include "app_nids.h"
+
+/* After MX_USARTx_UART_Init() and MX_X_CUBE_AI_Init() */
+NIDS_Init(&huart2);
+
+/* Inside while(1) */
+NIDS_ProcessLoop();

@@ -25,6 +25,12 @@ Optional run name (recommended for comparisons):
 python -m src.main_train --run_name xgb_run_01
 ```
 
+Export a trained 15-feature scikit-learn run to ONNX:
+
+```bash
+python -m src.main_export_onnx --run_name rf_run_03
+```
+
 4. Start dashboard server
 
 ```bash
@@ -82,12 +88,16 @@ python -m src.main_flowmeter --run_name rf_run_03 --pcap capture.pcap --cic_cmd 
 ```
 
 Dashboard: http://127.0.0.1:5000
+## Uart test
+cd nids_pc_prototype
+python -m src.main_stm32_uart_test --run_name rf_run_04 --port COM6 --baudrate 115200 --limit 100 --dashboard
 
 ## Notes
 
 - The fixed feature order is defined in `src/features/feature_list.py` and must be enforced everywhere.
 - The preprocessor (log1p + MinMax) is saved to `artifacts/scalers/preprocessor.json`.
 - The trained model is saved to `artifacts/models/model.joblib`.
+- The ONNX export is saved to `artifacts/models/<run_name>/model.onnx` when using `src.main_export_onnx`.
 - Reports, confusion matrix plots, ROC curves, and PR curves are saved to `artifacts/reports/`.
 - Each training run is also versioned under:
   - `artifacts/models/<run_name>/`
@@ -147,3 +157,28 @@ train:
 - WebAttack: labels containing "Web Attack", "SQL Injection", "XSS"
 
 All other labels are dropped (counts are logged).
+
+
+The script does the full 5-phase flow you asked for: it keeps only the 7 STM32-safe features, converts Down/Up Ratio into an integer x100 fixed-point value, injects synthetic DoS and BruteForce traffic, trains a constrained RandomForestClassifier with n_estimators=20, max_depth=8, min_samples_leaf=5, enforces a Macro F1 quality gate at 0.85, and exports a loadable emlearn header with comments showing the STM32 eml_trees_predict() call pattern.
+
+Verification: python -m py_compile nids_pc_prototype/stm32_nids_pipeline.py passed.
+
+python nids_pc_prototype/stm32_nids_pipeline.py --baseline_csv local_baseline.csv --output_header nids_model.h
+
+cd nids_pc_prototype
+python -m src.main_export_test_split --run_name rf_run_04
+python -m src.main_export_test_split --run_name rf_run_04 --output "data/processed/my_test.csv"
+## For prepocessed test set (log1p + MinMax already applied, no labels):
+cd nids_pc_prototype
+python -m src.main_export_test_split --run_name rf_run_04 --preprocessed
+
+cd nids_pc_prototype
+python -m src.main_export_test_split --run_name rf_run_04 --preprocessed --cubemx
+
+
+cd nids_pc_prototype
+python -m src.main_export_test_split --run_name rf_run_04 --preprocessed --cubemx
+ ## DIRECT MODEL EXPORT 
+ cd nids_pc_prototype
+pip install -r requirements.txt
+python -m src.main_export_emlearn --run_name rf_run_04
