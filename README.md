@@ -1,184 +1,141 @@
-# NIDS PC Prototype (CSE-CIC-IDS2018)
+# STM32 Network Intrusion Detection Prototype
 
-This prototype ingests the CSE-CIC-IDS2018 Intrusion CSVs, maps labels into 5 classes, applies log1p + MinMax scaling on a fixed feature list, trains a configurable classifier backend (XGBoost, Random Forest, or Logistic Regression), evaluates metrics, and runs a Flask dashboard with a streaming simulator.
+A research prototype for training a network-flow classifier on CSE-CIC-IDS2018 CSVs, exporting a Random Forest to C, and evaluating STM32 predictions over UART. A local Flask dashboard displays PC or device events.
 
-## Quick Start
+The supported workflow uses **15 features and five classes**: Normal, DoS, BruteForce, Botnet, and WebAttack. Feature order is defined in `src/features/feature_list.py` and checked against the configuration. Device class IDs follow the exported `class_map.json`, not the order in this paragraph.
 
-1. Install dependencies
+## Repository contents
 
-```bash
-cd nids_pc_prototype
-pip install -r requirements.txt
+```text
+config/                 Training, data paths and dashboard defaults
+src/data/               CSV cleaning, label mapping, splits and replay
+src/features/           Canonical feature order and preprocessing
+src/model/              Model backends, training, evaluation and persistence
+src/uart/               Shared UART protocol and device evaluation
+src/dashboard/          Flask API and dashboard assets
+src/flows.py            Shared Scapy flow aggregation
+src/main_*.py           Command-line entry points
+firmware/               STM32 UART adapters and integration instructions
+tests/                  Dataset-free regression and C export tests
+docs/                   Reproducibility and evaluation limitations
 ```
 
-2. Place IDS2018 Intrusion CSVs in `data/raw/`
+Datasets, processed rows, split indices, packet captures, models, generated exports, experiment outputs, and **all notebooks** are local-only and excluded from Git. Training creates the necessary directories. No model or dataset is bundled with a fresh checkout.
 
-3. Train + export artifacts
+## Installation
 
-```bash
-python -m src.main_train
+Use Python **3.13**; this is the version used for local validation. From the repository root:
+
+```powershell
+python -m venv .venv
+.venv/Scripts/Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-Optional run name (recommended for comparisons):
+Install optional capabilities as needed:
 
-```bash
-python -m src.main_train --run_name xgb_run_01
+```powershell
+python -m pip install -r requirements-hardware.txt  # UART and Scapy capture
+python -m pip install -r requirements-export.txt    # ONNX, emlearn and m2cgen
+python -m pip install -r requirements-xgboost.txt   # Optional training backend
 ```
 
-Export a trained 15-feature scikit-learn run to ONNX:
+The custom plain-C Random Forest exporter uses only the core dependencies. Live capture on Windows requires Npcap and appropriate capture permissions. GCC is used by the C equivalence tests; STM32 firmware requires your board's STM32Cube toolchain and HAL.
 
-```bash
-python -m src.main_export_onnx --run_name rf_run_03
+## Dataset preparation and training
+
+Obtain the CSE-CIC-IDS2018 Intrusion CSV files separately and place them directly in `data/raw/`, or configure `data.raw_dir`. Do not put download credentials in source files.
+
+Cleaning trims column names, selects the 15 configured features, drops unsupported labels and nonfinite values, and converts features to float32. `BENIGN` maps to Normal; DoS/DDoS variants map to DoS; brute-force variants map to BruteForce; Bot maps to Botnet; SQL injection/XSS/web attack labels map to WebAttack. See `src/data/label_map.py` for the exact matching rules. Unsupported labels are dropped. Raw negative values are not currently rejected; see the limitations document.
+
+```powershell
+python -m src.main_train --run_name rf_demo
 ```
 
-4. Start dashboard server
+Edit `config/config.yaml` before training. The default backend is Random Forest. Logistic Regression is also available; XGBoost requires its optional dependency. Reduce `data.max_rows` or `data.sample_frac` for an experiment, but note that the current loader still gathers the cleaned dataset in memory before this sampling.
 
-```bash
+Training fits log1p feature selection and MinMax parameters on the training split only. It saves local model, preprocessor, metrics and metadata under `artifacts/`, plus `data/processed/processed.csv` and `splits.json` for local replay.
+
+New runs also save their configuration, raw-file SHA-256 manifest and split indices under `artifacts/metadata/<run_name>/`. Named replay and evaluation commands use those records and reject changed dataset files. Old local runs without these records emit a warning and use the legacy shared configuration/split files; their original correspondence cannot be guaranteed.
+
+## Export and STM32 integration
+
+The primary deployment route is the custom plain-C Random Forest exporter:
+
+```powershell
+python -m src.main_export_rf_c --run_name rf_demo
+```
+
+It writes `rf_model.h`, `rf_model.c`, `rf_preprocessor.h`, `preprocessor.json`, `class_map.json` and export metadata into `artifacts/embedded_c/rf_demo/`. These generated files remain local.
+
+Follow [firmware/README.md](firmware/README.md) to integrate the model and UART adapter into your own STM32Cube project. The repository provides adapter source, not a complete board-specific firmware project. The primary adapter preprocesses raw float inputs on the device by default.
+
+Evaluate a flashed board using its actual serial port:
+
+```powershell
+python -m src.main_rfc_uart_eval --train_run_name rf_demo --port COM5 --device_preprocess --limit 500
+```
+
+The evaluator sends validation and test rows, records accepted/skipped responses, and writes local reports. Accuracy, F1 and confusion matrices use device replies. **ROC/PR curves use PC joblib probabilities** and are labeled as PC reference results; they do not measure device probability output.
+
+For a firmware build expecting already-preprocessed inputs, omit `--device_preprocess`. The firmware and host modes must agree.
+
+## Dashboard and replay
+
+Start the dashboard in one terminal:
+
+```powershell
 python -m src.main_serve
 ```
 
-5. Stream test set events to the dashboard
+Open `http://127.0.0.1:5000`. In another terminal, replay PC predictions:
 
-```bash
-python -m src.main_stream --speed 5 --min_confidence 0.5
+```powershell
+python -m src.main_stream --run_name rf_demo --speed 5
 ```
 
-To stream with a specific trained run:
+Or post device predictions while replaying test rows:
 
-```bash
-python -m src.main_stream --run_name rf_run_01 --speed 5
+```powershell
+python -m src.main_stm32_uart_test --run_name rf_demo --port COM5 --device_preprocess --limit 100 --dashboard
 ```
 
-6. (Optional) Sniff live traffic with Scapy and run model inference
+The dashboard is a local demonstration with in-memory events. Its counts describe received predictions, not independently verified attacks.
 
-```bash
-python -m src.main_sniff --run_name rf_run_03 --iface "Ethernet" --bpf "tcp or udp" --dashboard
+## Live capture and flow CSV inference
+
+```powershell
+python -m src.main_sniff --run_name rf_demo --iface "Ethernet" --bpf "tcp or udp" --dashboard
+python -m src.main_flowmeter_sniff --iface "Ethernet" --bpf "tcp or udp" --csv_out data/processed/live_flows_15.csv
+python -m src.main_flowmeter --run_name rf_demo --flows_csv data/processed/live_flows_15.csv --dashboard
 ```
 
-Offline pcap replay:
+`main_sniff` and `main_flowmeter_sniff` also accept `--pcap` for local offline replay. `main_flowmeter` can invoke an external CICFlowMeter installation through `--cic_cmd`; use `--help` for its command template. Custom Scapy features have not been established as equivalent to the CICFlowMeter features in the training dataset. Live detection accuracy is therefore unverified.
 
-```bash
-python -m src.main_sniff --run_name rf_run_03 --pcap your_capture.pcap --bpf "tcp or udp"
+## Alternative exports
+
+```powershell
+python -m src.main_export_onnx --run_name rf_demo
+python -m src.main_compare_joblib_onnx --run_name rf_demo --limit 1000
+python -m src.main_export_emlearn --run_name rf_demo
+python -m src.main_export_m2cgen --run_name rf_demo
+python -m src.main_m2cgen_uart_eval --train_run_name rf_demo --port COM5 --limit 500
 ```
 
-Export the 15 flow features to CSV in real time while sniffing:
+These are optional export paths. ONNX export is intended for supported scikit-learn models; the XGBoost wrapper has no corresponding ONNX converter here. emlearn and m2cgen exports are restricted to Random Forest. Export success alone does not demonstrate STM32 memory fit or numerical agreement.
 
-```bash
-python -m src.main_flowmeter_sniff --iface "Wi-Fi" --bpf "tcp or udp" --csv_out data/processed/live_flows_15.csv
+For external desktop validation, export test inputs locally:
+
+```powershell
+python -m src.main_export_test_split --run_name rf_demo --preprocessed --cubemx
 ```
 
-Offline pcap replay to CSV:
+## Verification
 
-```bash
-python -m src.main_flowmeter_sniff --pcap your_capture.pcap --bpf "tcp or udp" --csv_out data/processed/live_flows_15.csv
+```powershell
+python -m unittest discover -s tests -v
 ```
 
-7. (Optional) Run inference on CICFlowMeter flow CSVs
+Tests use small generated fixtures, never the local dataset or trained model files. GCC-dependent tests are skipped when GCC is unavailable. Hardware UART behavior and board memory/timing require separate device testing.
 
-If you already generated a CICFlowMeter flow CSV:
-
-```bash
-python -m src.main_flowmeter --run_name rf_run_03 --flows_csv path\\to\\cic_flow.csv --dashboard
-```
-
-If you want this script to invoke CICFlowMeter on a pcap (example template, adjust to your CICFlowMeter install):
-
-```bash
-python -m src.main_flowmeter --run_name rf_run_03 --pcap capture.pcap --cic_cmd "java -jar C:\\tools\\CICFlowMeter.jar {pcap} {out}" --dashboard
-```
-
-Dashboard: http://127.0.0.1:5000
-## Uart test
-cd nids_pc_prototype
-python -m src.main_stm32_uart_test --run_name rf_run_04 --port COM6 --baudrate 115200 --limit 100 --dashboard
-
-## Notes
-
-- The fixed feature order is defined in `src/features/feature_list.py` and must be enforced everywhere.
-- The preprocessor (log1p + MinMax) is saved to `artifacts/scalers/preprocessor.json`.
-- The trained model is saved to `artifacts/models/model.joblib`.
-- The ONNX export is saved to `artifacts/models/<run_name>/model.onnx` when using `src.main_export_onnx`.
-- Reports, confusion matrix plots, ROC curves, and PR curves are saved to `artifacts/reports/`.
-- Each training run is also versioned under:
-  - `artifacts/models/<run_name>/`
-  - `artifacts/scalers/<run_name>/`
-  - `artifacts/reports/<run_name>/`
-  - `artifacts/metadata/<run_name>/`
-- The cleaned and processed dataset is saved to `data/processed/processed.csv` to support streaming.
-- Class imbalance is handled with class weights computed from the training split.
-- For `xgboost`, those class weights are converted into per-row `sample_weight` during fitting.
-- `main_sniff` uses Scapy and requires packet-capture privileges (Npcap/administrator on Windows for live sniffing).
-
-## Config
-
-Edit defaults in `config/config.yaml`:
-
-- data paths
-- chunk size and sampling
-- split ratios
-- model backend selection (`xgboost`, `random_forest`, or `logistic_regression`)
-- Random Forest, XGBoost, and Logistic Regression hyperparameters
-- dashboard host/port
-
-Example:
-
-```yaml
-train:
-  model_type: xgboost
-  random_state: 42
-  rf_n_estimators: 200
-  rf_max_depth: 20
-  rf_min_samples_leaf: 2
-  rf_n_jobs: -1
-  xgb_n_estimators: 300
-  xgb_max_depth: 8
-  xgb_learning_rate: 0.1
-  xgb_subsample: 0.8
-  xgb_colsample_bytree: 0.8
-  xgb_min_child_weight: 1.0
-  xgb_reg_lambda: 1.0
-  xgb_n_jobs: -1
-  xgb_tree_method: hist
-  xgb_verbosity: 1
-  lr_c: 1.0
-  lr_max_iter: 1000
-  lr_solver: lbfgs
-  lr_penalty: l2
-  lr_multi_class: auto
-  lr_n_jobs: -1
-```
-
-## Label Mapping
-
-- Normal: BENIGN -> Normal
-- DoS: labels containing "DoS", "DDoS", "HOIC", "LOIC"
-- BruteForce: labels containing "Brute Force", "BruteForce", "SSH-Bruteforce", "FTP-Bruteforce"
-- Botnet: labels containing "Bot", "Botnet"
-- WebAttack: labels containing "Web Attack", "SQL Injection", "XSS"
-
-All other labels are dropped (counts are logged).
-
-
-The script does the full 5-phase flow you asked for: it keeps only the 7 STM32-safe features, converts Down/Up Ratio into an integer x100 fixed-point value, injects synthetic DoS and BruteForce traffic, trains a constrained RandomForestClassifier with n_estimators=20, max_depth=8, min_samples_leaf=5, enforces a Macro F1 quality gate at 0.85, and exports a loadable emlearn header with comments showing the STM32 eml_trees_predict() call pattern.
-
-Verification: python -m py_compile nids_pc_prototype/stm32_nids_pipeline.py passed.
-
-python nids_pc_prototype/stm32_nids_pipeline.py --baseline_csv local_baseline.csv --output_header nids_model.h
-
-cd nids_pc_prototype
-python -m src.main_export_test_split --run_name rf_run_04
-python -m src.main_export_test_split --run_name rf_run_04 --output "data/processed/my_test.csv"
-## For prepocessed test set (log1p + MinMax already applied, no labels):
-cd nids_pc_prototype
-python -m src.main_export_test_split --run_name rf_run_04 --preprocessed
-
-cd nids_pc_prototype
-python -m src.main_export_test_split --run_name rf_run_04 --preprocessed --cubemx
-
-
-cd nids_pc_prototype
-python -m src.main_export_test_split --run_name rf_run_04 --preprocessed --cubemx
- ## DIRECT MODEL EXPORT 
- cd nids_pc_prototype
-pip install -r requirements.txt
-python -m src.main_export_emlearn --run_name rf_run_04
+See [docs/limitations.md](docs/limitations.md) for the interpretation of metrics and deployment constraints.

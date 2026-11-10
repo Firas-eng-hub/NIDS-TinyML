@@ -1,58 +1,35 @@
-"""Replay preprocessed test-set rows to an STM32 over UART."""
+"""Replay test-set rows to an STM32 over UART.
+
+Supports two device modes:
+- host_preprocessed: PC applies log1p + MinMax, STM32 only predicts
+- device_preprocess: PC sends raw cleaned feature values, STM32 preprocesses
+  and predicts
+"""
 
 import argparse
 import json
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import joblib
 import pandas as pd
 import requests
-import yaml
 
-from .data.loader import load_and_clean_data
+from .config import load_config
+from .data.replay import rebuild_training_dataframe
 from .features.preprocess import load_preprocessor, transform
+from .uart.protocol import encode_row, parse_response
 
 try:
     import serial
 except ImportError as exc:  # pragma: no cover - import guard for optional dependency
-    raise ImportError("pyserial is required for UART replay. Install it with: pip install pyserial") from exc
+    raise ImportError(
+        "pyserial is required for UART replay. Install it with: pip install pyserial"
+    ) from exc
 
 
-def load_config(config_path: Optional[str] = None) -> Tuple[dict, Path]:
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
-    return cfg, root
-
-
-def resolve_run_paths(cfg: dict, root: Path, run_name: str) -> Tuple[Path, Path, Path, Path]:
-    model_path = root / cfg["artifacts"]["models_dir"] / run_name / "model.joblib"
-    scaler_path = root / cfg["artifacts"]["scalers_dir"] / run_name / "preprocessor.json"
-    metadata_path = root / cfg["artifacts"]["metadata_dir"] / run_name / "metadata.json"
-    splits_path = root / cfg["data"]["processed_dir"] / "splits.json"
-    return model_path, scaler_path, metadata_path, splits_path
-
-
-def rebuild_training_dataframe(cfg: dict, root: Path) -> pd.DataFrame:
-    feature_order = list(cfg["features"]["fixed_list"])
-    raw_dir = root / cfg["data"]["raw_dir"]
-    random_state = int(cfg["train"]["random_state"])
-
-    df, _ = load_and_clean_data(str(raw_dir), int(cfg["data"]["chunksize"]), feature_order)
-
-    sample_frac = float(cfg["data"]["sample_frac"])
-    max_rows = int(cfg["data"]["max_rows"])
-
-    if sample_frac < 1.0:
-        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
-    if max_rows > 0 and len(df) > max_rows:
-        df = df.sample(n=max_rows, random_state=random_state).reset_index(drop=True)
-
-    return df.reset_index(drop=True)
+from .config import resolve_run_paths
 
 
 def load_test_split(df: pd.DataFrame, splits_path: Path) -> pd.DataFrame:
@@ -62,7 +39,9 @@ def load_test_split(df: pd.DataFrame, splits_path: Path) -> pd.DataFrame:
     return df.iloc[test_indices].reset_index(drop=True)
 
 
-def load_run_info(model_path: Path, metadata_path: Path, scaler_path: Path) -> Tuple[List[str], Dict[str, object]]:
+def load_run_info(
+    model_path: Path, metadata_path: Path, scaler_path: Path
+) -> Tuple[List[str], Dict[str, object]]:
     model = joblib.load(model_path)
     preprocessor = load_preprocessor(str(scaler_path))
     if hasattr(model, "classes_"):
@@ -74,70 +53,79 @@ def load_run_info(model_path: Path, metadata_path: Path, scaler_path: Path) -> T
     return class_names, preprocessor
 
 
-def encode_row(row_id: int, feature_values: List[float]) -> bytes:
-    payload = [str(row_id)] + [f"{value:.6f}" for value in feature_values]
-    return (",".join(payload) + "\n").encode("ascii")
-
-
-def parse_response(line: str) -> Tuple[Optional[int], int, float]:
-    line = line.strip()
-    if not line:
-        raise ValueError("Received an empty UART line")
-
-    if line.startswith("{"):
-        payload = json.loads(line)
-        row_id = payload.get("row_id")
-        pred_id = int(payload["pred_id"])
-        confidence = float(payload.get("confidence", 0.0))
-        return row_id, pred_id, confidence
-
-    parts = [part.strip() for part in line.split(",")]
-    if len(parts) == 2:
-        confidence = float(parts[1])
-        if confidence > 1.0:
-            confidence /= 1_000_000.0
-        return None, int(parts[0]), confidence
-    if len(parts) == 3:
-        confidence = float(parts[2])
-        if confidence > 1.0:
-            confidence /= 1_000_000.0
-        return int(parts[0]), int(parts[1]), confidence
-    raise ValueError(f"Unsupported STM32 response format: {line}")
-
-
 def build_event(
     row_id: int,
     truth_label: str,
     predicted_label: str,
     confidence: float,
-    scaled_row: List[float],
+    feature_row: List[float],
+    feature_source: str,
 ) -> Dict[str, object]:
-    return {
+    event = {
         "flow_id": f"test_row_{row_id}",
         "predicted_class": predicted_label,
         "confidence": confidence,
         "ground_truth": truth_label,
         "source": "stm32_uart",
-        "scaled_feature_preview": scaled_row[:5],
     }
+    event[f"{feature_source}_feature_preview"] = feature_row[:5]
+    return event
+
+
+def build_feature_matrix(
+    test_df: pd.DataFrame,
+    preprocessor: Dict[str, object],
+    device_preprocess: bool,
+) -> Tuple[pd.DataFrame, str]:
+    feature_order = list(preprocessor["feature_order"])
+    feature_df = test_df[feature_order].copy()
+
+    if device_preprocess:
+        return feature_df.astype("float32"), "raw"
+
+    scaled = transform(test_df, preprocessor)
+    return pd.DataFrame(scaled, columns=feature_order), "scaled"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--run_name", required=True, help="Trained run name, e.g. rf_run_04")
+    parser.add_argument(
+        "--run_name", required=True, help="Trained run name, e.g. rf_run_04"
+    )
     parser.add_argument("--port", required=True, help="UART port, e.g. COM6")
     parser.add_argument("--baudrate", type=int, default=115200, help="UART baudrate")
-    parser.add_argument("--timeout", type=float, default=3.0, help="Serial read timeout in seconds")
-    parser.add_argument("--limit", type=int, default=100, help="How many test rows to send")
-    parser.add_argument("--start_index", type=int, default=0, help="Start offset inside the test split")
-    parser.add_argument("--delay_ms", type=float, default=0.0, help="Delay between rows in milliseconds")
-    parser.add_argument("--dashboard", action="store_true", help="Post STM32 predictions to the dashboard")
-    parser.add_argument("--dashboard_url", default=None, help="Override dashboard events URL")
+    parser.add_argument(
+        "--timeout", type=float, default=3.0, help="Serial read timeout in seconds"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=100, help="How many test rows to send"
+    )
+    parser.add_argument(
+        "--start_index", type=int, default=0, help="Start offset inside the test split"
+    )
+    parser.add_argument(
+        "--delay_ms", type=float, default=0.0, help="Delay between rows in milliseconds"
+    )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Post STM32 predictions to the dashboard",
+    )
+    parser.add_argument(
+        "--dashboard_url", default=None, help="Override dashboard events URL"
+    )
+    parser.add_argument(
+        "--device_preprocess",
+        action="store_true",
+        help="Send raw cleaned features to STM32; use this when STM32 performs preprocessing on-device",
+    )
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
-    model_path, scaler_path, metadata_path, splits_path = resolve_run_paths(cfg, root, args.run_name)
+    model_path, scaler_path, metadata_path, splits_path = resolve_run_paths(
+        cfg, root, args.run_name
+    )
 
     if not model_path.exists():
         raise FileNotFoundError(f"Model artifact not found: {model_path}")
@@ -152,9 +140,13 @@ def main() -> None:
     feature_order = list(preprocessor["feature_order"])
 
     print("Rebuilding cleaned dataset...")
-    df = rebuild_training_dataframe(cfg, root)
+    df = rebuild_training_dataframe(cfg, root, args.run_name)
     test_df = load_test_split(df, splits_path)
-    scaled_test = transform(test_df, preprocessor)
+    feature_df, feature_source = build_feature_matrix(
+        test_df=test_df,
+        preprocessor=preprocessor,
+        device_preprocess=args.device_preprocess,
+    )
 
     total_available = len(test_df)
     start_index = max(0, int(args.start_index))
@@ -175,7 +167,10 @@ def main() -> None:
     print(f"Sending rows: {start_index}..{end_index - 1}")
     print(f"Feature count: {len(feature_order)}")
     print("Host -> STM32 line format: row_id,f1,f2,...,f15")
-    print("STM32 -> Host expected format: pred_id,confidence OR row_id,pred_id,confidence")
+    print(
+        "STM32 -> Host expected format: pred_id,confidence OR row_id,pred_id,confidence"
+    )
+    print(f"Feature payload mode: {feature_source}")
 
     correct = 0
     sent = 0
@@ -187,27 +182,36 @@ def main() -> None:
         ser.reset_output_buffer()
 
         for row_id in range(start_index, end_index):
-            scaled_row = scaled_test[row_id].tolist()
+            feature_row = feature_df.iloc[row_id].tolist()
             truth_label = str(test_df.iloc[row_id]["Label_mapped"])
 
-            ser.write(encode_row(row_id, scaled_row))
+            ser.write(encode_row(row_id, feature_row))
             raw_response = ser.readline().decode("utf-8", errors="replace").strip()
             if not raw_response:
-                print(f"row={row_id} timeout waiting for STM32 response")
+                print(f"row={row_id} timeout waiting for STM32 response", flush=True)
                 continue
 
             try:
                 echoed_row_id, pred_id, confidence = parse_response(raw_response)
             except Exception as exc:  # pragma: no cover - runtime device parsing
-                print(f"row={row_id} invalid response={raw_response!r} error={exc}")
+                print(
+                    f"row={row_id} invalid response={raw_response!r} error={exc}",
+                    flush=True,
+                )
                 continue
 
             if echoed_row_id is not None and int(echoed_row_id) != row_id:
-                print(f"row={row_id} mismatched echoed row_id={echoed_row_id}, response={raw_response!r}")
+                print(
+                    f"row={row_id} mismatched echoed row_id={echoed_row_id}, response={raw_response!r}",
+                    flush=True,
+                )
                 continue
 
             if pred_id < 0 or pred_id >= len(class_names):
-                print(f"row={row_id} invalid pred_id={pred_id}, response={raw_response!r}")
+                print(
+                    f"row={row_id} invalid pred_id={pred_id}, response={raw_response!r}",
+                    flush=True,
+                )
                 continue
 
             predicted_label = class_names[pred_id]
@@ -217,7 +221,8 @@ def main() -> None:
 
             print(
                 f"row={row_id} truth={truth_label} pred={predicted_label} "
-                f"pred_id={pred_id} conf={confidence:.4f} ok={is_correct}"
+                f"pred_id={pred_id} conf={confidence:.4f} ok={is_correct}",
+                flush=True,
             )
 
             if args.dashboard and dashboard_url:
@@ -226,7 +231,8 @@ def main() -> None:
                     truth_label=truth_label,
                     predicted_label=predicted_label,
                     confidence=confidence,
-                    scaled_row=scaled_row,
+                    feature_row=feature_row,
+                    feature_source=feature_source,
                 )
                 try:
                     requests.post(dashboard_url, json=event, timeout=3)
@@ -238,7 +244,9 @@ def main() -> None:
                 time.sleep(float(args.delay_ms) / 1000.0)
 
     accuracy = 0.0 if sent == 0 else correct / float(sent)
-    print(f"Done. rows_scored={sent} correct={correct} accuracy={accuracy:.4f} dashboard_posted={posted}")
+    print(
+        f"Done. rows_scored={sent} correct={correct} accuracy={accuracy:.4f} dashboard_posted={posted}"
+    )
 
 
 if __name__ == "__main__":

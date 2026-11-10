@@ -1,20 +1,17 @@
 """Stream test set rows into the dashboard backend."""
 
 import argparse
-import json
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 import warnings
+from datetime import datetime, timezone
 
 import joblib
 import numpy as np
 import pandas as pd
 import requests
-import yaml
 
+from .config import load_config
 from .features.preprocess import load_preprocessor, transform
-
 
 warnings.filterwarnings(
     "ignore",
@@ -25,15 +22,6 @@ warnings.filterwarnings(
     category=UserWarning,
     module=r"sklearn\.utils\.parallel",
 )
-
-
-def load_config(config_path: str = None):
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return cfg, root
 
 
 def find_timestamp_column(columns):
@@ -55,7 +43,9 @@ def main():
     parser.add_argument("--min_confidence", type=float, default=None)
     parser.add_argument("--only_attacks", action="store_true")
     parser.add_argument("--batch_size", type=int, default=None)
-    parser.add_argument("--quiet", action="store_true", help="Disable per-flow console output")
+    parser.add_argument(
+        "--quiet", action="store_true", help="Disable per-flow console output"
+    )
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
@@ -64,18 +54,20 @@ def main():
     processed_path = processed_dir / "processed.csv"
     splits_path = processed_dir / "splits.json"
 
-    if not processed_path.exists() or not splits_path.exists():
-        raise FileNotFoundError("Run main_train first to generate processed.csv and splits.json")
+    if not args.run_name and (not processed_path.exists() or not splits_path.exists()):
+        raise FileNotFoundError(
+            "Run main_train first to generate processed.csv and splits.json"
+        )
 
-    df = pd.read_csv(processed_path)
-    with open(splits_path, "r", encoding="utf-8") as f:
-        splits = json.load(f)
+    from .config import resolve_split_path
+    from .data.replay import load_split, rebuild_training_dataframe
 
-    test_idx = splits.get("test", [])
-    if not test_idx:
-        raise ValueError("No test indices found in splits.json")
-
-    test_df = df.iloc[test_idx].reset_index(drop=True)
+    if args.run_name:
+        df = rebuild_training_dataframe(cfg, root, args.run_name)
+        test_df = load_split(df, resolve_split_path(cfg, root, args.run_name), "test")
+    else:
+        df = pd.read_csv(processed_path)
+        test_df = load_split(df, splits_path, "test")
 
     feature_order = cfg["features"]["fixed_list"]
     timestamp_col = find_timestamp_column(test_df.columns)
@@ -103,11 +95,17 @@ def main():
     preprocessor = load_preprocessor(preproc_path)
 
     speed = cfg["stream"]["speed"] if args.speed is None else args.speed
-    min_conf = cfg["stream"]["min_confidence"] if args.min_confidence is None else args.min_confidence
+    min_conf = (
+        cfg["stream"]["min_confidence"]
+        if args.min_confidence is None
+        else args.min_confidence
+    )
     speed = float(speed)
     min_conf = float(min_conf)
     only_attacks = cfg["stream"]["only_attacks"] or args.only_attacks
-    batch_size = cfg["stream"]["batch_size"] if args.batch_size is None else args.batch_size
+    batch_size = (
+        cfg["stream"]["batch_size"] if args.batch_size is None else args.batch_size
+    )
     batch_size = max(1, int(batch_size))
 
     host = cfg["dashboard"]["host"]
@@ -146,9 +144,15 @@ def main():
             if confidence < float(min_conf):
                 continue
 
-            ts = row[timestamp_col] if timestamp_col else datetime.now(timezone.utc).isoformat()
+            ts = (
+                row[timestamp_col]
+                if timestamp_col
+                else datetime.now(timezone.utc).isoformat()
+            )
             values = {f: float(row[f]) for f in feature_order}
-            top_features = dict(sorted(values.items(), key=lambda x: abs(x[1]), reverse=True)[:5])
+            top_features = dict(
+                sorted(values.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
+            )
 
             events.append(
                 {

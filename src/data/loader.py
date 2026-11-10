@@ -8,15 +8,19 @@ from .cleaner import clean_chunk
 
 
 def list_csv_files(raw_dir: str) -> List[str]:
-    import glob
-    import os
+    from pathlib import Path
 
-    csvs = glob.glob(os.path.join(raw_dir, "*.csv"))
-    csvs += glob.glob(os.path.join(raw_dir, "*.CSV"))
-    return sorted(csvs)
+    directory = Path(raw_dir)
+    return sorted(
+        str(p)
+        for p in directory.iterdir()
+        if p.is_file() and p.suffix.lower() == ".csv"
+    )
 
 
-def iter_csv_chunks(paths: List[str], chunksize: int) -> Generator[pd.DataFrame, None, None]:
+def iter_csv_chunks(
+    paths: List[str], chunksize: int
+) -> Generator[pd.DataFrame, None, None]:
     for path in paths:
         for chunk in pd.read_csv(path, chunksize=chunksize, low_memory=False):
             yield chunk

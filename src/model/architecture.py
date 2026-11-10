@@ -41,7 +41,9 @@ class XGBoostStringLabelClassifier:
 
         if missing:
             missing_labels = ", ".join(sorted(missing))
-            raise ValueError(f"Found unknown labels for XGBoost model: {missing_labels}")
+            raise ValueError(
+                f"Found unknown labels for XGBoost model: {missing_labels}"
+            )
 
         return np.asarray(encoded, dtype=np.int32)
 
@@ -90,7 +92,9 @@ class XGBoostStringLabelClassifier:
 def _build_random_forest(train_cfg: Dict[str, object]) -> RandomForestClassifier:
     return RandomForestClassifier(
         n_estimators=int(train_cfg["rf_n_estimators"]),
-        max_depth=None if train_cfg["rf_max_depth"] in (None, 0) else int(train_cfg["rf_max_depth"]),
+        max_depth=None
+        if train_cfg["rf_max_depth"] in (None, 0)
+        else int(train_cfg["rf_max_depth"]),
         min_samples_leaf=int(train_cfg["rf_min_samples_leaf"]),
         n_jobs=int(train_cfg["rf_n_jobs"]),
         random_state=int(train_cfg["random_state"]),
@@ -98,7 +102,9 @@ def _build_random_forest(train_cfg: Dict[str, object]) -> RandomForestClassifier
     )
 
 
-def _build_xgboost(train_cfg: Dict[str, object], class_names: Sequence[str]) -> XGBoostStringLabelClassifier:
+def _build_xgboost(
+    train_cfg: Dict[str, object], class_names: Sequence[str]
+) -> XGBoostStringLabelClassifier:
     return XGBoostStringLabelClassifier(
         class_names=class_names,
         objective="multi:softprob",

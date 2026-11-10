@@ -1,41 +1,19 @@
 """Run model inference on CICFlowMeter-style flow CSVs (pcap -> flows -> model)."""
 
 import argparse
-import os
 import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional
 
 import joblib
 import numpy as np
 import pandas as pd
 import requests
-import yaml
 
+from .config import load_config, resolve_artifacts
 from .features.preprocess import load_preprocessor, transform
-
-
-def load_config(config_path: Optional[str] = None) -> Tuple[dict, Path]:
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return cfg, root
-
-
-def resolve_artifacts(cfg: dict, root: Path, run_name: Optional[str]) -> Tuple[Path, Path]:
-    models_dir = root / cfg["artifacts"]["models_dir"]
-    scalers_dir = root / cfg["artifacts"]["scalers_dir"]
-    if run_name:
-        model_path = models_dir / run_name / "model.joblib"
-        preproc_path = scalers_dir / run_name / "preprocessor.json"
-    else:
-        model_path = models_dir / "model.joblib"
-        preproc_path = scalers_dir / "preprocessor.json"
-    return model_path, preproc_path
 
 
 def _latest_csv_in_dir(directory: Path) -> Optional[Path]:
@@ -101,24 +79,46 @@ def _iter_flow_chunks(path: Path, chunksize: int) -> Iterable[pd.DataFrame]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--run_name", default=None, help="Use artifacts from a specific run (e.g., rf_run_03)")
+    parser.add_argument(
+        "--run_name",
+        default=None,
+        help="Use artifacts from a specific run (e.g., rf_run_03)",
+    )
 
     # Input options.
-    parser.add_argument("--flows_csv", default=None, help="Path to CICFlowMeter flow CSV to run inference on")
-    parser.add_argument("--pcap", default=None, help="Optional pcap path (if you want this script to run CICFlowMeter)")
+    parser.add_argument(
+        "--flows_csv",
+        default=None,
+        help="Path to CICFlowMeter flow CSV to run inference on",
+    )
+    parser.add_argument(
+        "--pcap",
+        default=None,
+        help="Optional pcap path (if you want this script to run CICFlowMeter)",
+    )
     parser.add_argument(
         "--cic_cmd",
         default=None,
         help="Command template to run CICFlowMeter. Use {pcap} and {out} placeholders.",
     )
-    parser.add_argument("--cic_out_dir", default="data/processed/cicflowmeter_out", help="Output dir for CICFlowMeter")
+    parser.add_argument(
+        "--cic_out_dir",
+        default="data/processed/cicflowmeter_out",
+        help="Output dir for CICFlowMeter",
+    )
 
     # Output controls.
     parser.add_argument("--min_confidence", type=float, default=0.0)
     parser.add_argument("--only_attacks", action="store_true")
-    parser.add_argument("--dashboard", action="store_true", help="Post events to Flask dashboard API")
-    parser.add_argument("--quiet", action="store_true", help="Disable per-flow console output")
-    parser.add_argument("--limit", type=int, default=0, help="Max rows to process (0 means unlimited)")
+    parser.add_argument(
+        "--dashboard", action="store_true", help="Post events to Flask dashboard API"
+    )
+    parser.add_argument(
+        "--quiet", action="store_true", help="Disable per-flow console output"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=0, help="Max rows to process (0 means unlimited)"
+    )
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
@@ -217,7 +217,11 @@ def main() -> None:
             row = chunk.iloc[i]
             ts = str(row[ts_col]) if ts_col else datetime.now(timezone.utc).isoformat()
             feature_values = {f: float(row[f]) for f in feature_order}
-            top_features = dict(sorted(feature_values.items(), key=lambda item: abs(item[1]), reverse=True)[:5])
+            top_features = dict(
+                sorted(
+                    feature_values.items(), key=lambda item: abs(item[1]), reverse=True
+                )[:5]
+            )
 
             event = {
                 "ts": ts,
@@ -247,4 +251,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

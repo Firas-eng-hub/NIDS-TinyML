@@ -1,25 +1,25 @@
 """End-to-end training pipeline."""
 
 import argparse
-from datetime import datetime
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import warnings
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
-import yaml
 
+from .config import load_config
+from .data.label_map import LABEL_MAPPING_INFO, TARGET_CLASSES
 from .data.loader import load_and_clean_data
+from .data.replay import dataset_manifest
 from .data.split import stratified_split
-from .data.label_map import TARGET_CLASSES, LABEL_MAPPING_INFO
-from .features.preprocess import fit_preprocessor, transform, save_preprocessor
-from .model.train import train_model
+from .features.preprocess import fit_preprocessor, save_preprocessor, transform
 from .model.evaluate import evaluate_model
-from .model.export import export_model, export_metadata
-
+from .model.export import export_metadata, export_model
+from .model.train import train_model
 
 warnings.filterwarnings(
     "ignore",
@@ -30,15 +30,6 @@ warnings.filterwarnings(
     category=UserWarning,
     module=r"sklearn\.utils\.parallel",
 )
-
-
-def load_config(config_path: str = None):
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    return cfg, root
 
 
 def _to_json_safe(value):
@@ -62,14 +53,18 @@ def _extract_model_params(model) -> dict:
 def _normalize_run_name(run_name: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", run_name).strip("._")
     if not cleaned:
-        raise ValueError("Run name is empty after normalization. Use letters, digits, '.', '_' or '-'.")
+        raise ValueError(
+            "Run name is empty after normalization. Use letters, digits, '.', '_' or '-'."
+        )
     return cleaned
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--run_name", default=None, help="Optional run name for versioned artifacts")
+    parser.add_argument(
+        "--run_name", default=None, help="Optional run name for versioned artifacts"
+    )
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
@@ -113,8 +108,18 @@ def main():
 
     print(f"Run name: {run_name}")
 
+    for name, payload in (
+        ("config.json", cfg),
+        ("dataset_manifest.json", dataset_manifest(raw_dir)),
+    ):
+        (run_metadata_dir / name).write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+
     print("Loading and cleaning CSVs...")
-    df, stats = load_and_clean_data(str(raw_dir), int(cfg["data"]["chunksize"]), feature_order)
+    df, stats = load_and_clean_data(
+        str(raw_dir), int(cfg["data"]["chunksize"]), feature_order
+    )
     print(f"Rows in: {stats['rows_in']}")
     print(f"Dropped (label): {stats['dropped_label']}")
     print(f"Dropped (nan/inf): {stats['dropped_nan']}")
@@ -124,7 +129,9 @@ def main():
     max_rows = int(cfg["data"]["max_rows"])
 
     if sample_frac < 1.0:
-        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
+        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(
+            drop=True
+        )
         print(f"Sampled fraction: {sample_frac}, rows: {len(df)}")
 
     if max_rows > 0 and len(df) > max_rows:
@@ -145,9 +152,12 @@ def main():
     splits_path = Path(processed_dir) / "splits.json"
     with open(splits_path, "w", encoding="utf-8") as f:
         json.dump(split_indices, f, indent=2)
+    shutil.copy2(splits_path, run_metadata_dir / "splits.json")
 
     print("Fitting preprocessor...")
-    preprocessor = fit_preprocessor(train_df[feature_order], feature_order, skew_threshold)
+    preprocessor = fit_preprocessor(
+        train_df[feature_order], feature_order, skew_threshold
+    )
 
     preproc_run_path = run_scaler_dir / "preprocessor.json"
     preproc_latest_path = scaler_dir / "preprocessor.json"
@@ -172,10 +182,14 @@ def main():
     shutil.copy2(model_run_path, model_latest_path)
 
     print("Evaluating on validation split...")
-    val_report = evaluate_model(model, X_val, y_val, TARGET_CLASSES, str(run_reports_dir), prefix="val")
+    val_report = evaluate_model(
+        model, X_val, y_val, TARGET_CLASSES, str(run_reports_dir), prefix="val"
+    )
 
     print("Evaluating on test split...")
-    test_report = evaluate_model(model, X_test, y_test, TARGET_CLASSES, str(run_reports_dir), prefix="test")
+    test_report = evaluate_model(
+        model, X_test, y_test, TARGET_CLASSES, str(run_reports_dir), prefix="test"
+    )
 
     report_artifact_keys = (
         "report_path",
@@ -204,11 +218,15 @@ def main():
 
     metadata = {
         "run_name": run_name,
+        "config_path": str(run_metadata_dir / "config.json"),
+        "splits_path": str(run_metadata_dir / "splits.json"),
         "feature_order": feature_order,
         "log1p_features": preprocessor["log1p_features"],
         "min_vals": preprocessor["min_vals"],
         "max_vals": preprocessor["max_vals"],
-        "class_names": [str(name) for name in getattr(model, "classes_", TARGET_CLASSES)],
+        "class_names": [
+            str(name) for name in getattr(model, "classes_", TARGET_CLASSES)
+        ],
         "model_type": model_type,
         "train_config": _to_json_safe(cfg["train"]),
         "model_params": _extract_model_params(model),

@@ -4,38 +4,31 @@ import argparse
 import json
 import shutil
 from pathlib import Path
-from typing import Optional, Tuple
 
 import joblib
-import yaml
+
+from .config import load_config
 
 try:
     import emlearn
 except ImportError as exc:  # pragma: no cover
-    raise ImportError("emlearn is required. Install it with: pip install emlearn") from exc
+    raise ImportError(
+        "emlearn is required. Install it with: pip install emlearn"
+    ) from exc
 
 
-def load_config(config_path: Optional[str] = None) -> Tuple[dict, Path]:
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
-    return cfg, root
-
-
-def resolve_run_paths(cfg: dict, root: Path, run_name: str) -> Tuple[Path, Path, Path]:
-    model_path = root / cfg["artifacts"]["models_dir"] / run_name / "model.joblib"
-    preprocessor_path = root / cfg["artifacts"]["scalers_dir"] / run_name / "preprocessor.json"
-    metadata_path = root / cfg["artifacts"]["metadata_dir"] / run_name / "metadata.json"
-    return model_path, preprocessor_path, metadata_path
+from .config import resolve_model_paths as resolve_run_paths
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--run_name", required=True, help="Trained RF run to export, e.g. rf_run_04")
-    parser.add_argument("--model_name", default="nids_model", help="C identifier for the exported model")
+    parser.add_argument(
+        "--run_name", required=True, help="Trained RF run to export, e.g. rf_run_04"
+    )
+    parser.add_argument(
+        "--model_name", default="nids_model", help="C identifier for the exported model"
+    )
     parser.add_argument(
         "--output_dir",
         default=None,
@@ -50,7 +43,9 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
-    model_path, preprocessor_path, metadata_path = resolve_run_paths(cfg, root, args.run_name)
+    model_path, preprocessor_path, metadata_path = resolve_run_paths(
+        cfg, root, args.run_name
+    )
 
     for path in (model_path, preprocessor_path, metadata_path):
         if not path.exists():
@@ -69,11 +64,18 @@ def main() -> None:
         metadata = json.load(handle)
 
     feature_order = list(preprocessor["feature_order"])
-    class_names = [str(name) for name in getattr(model, "classes_", metadata.get("class_names", []))]
+    class_names = [
+        str(name)
+        for name in getattr(model, "classes_", metadata.get("class_names", []))
+    ]
     if not class_names:
         raise ValueError("No class names available from model or metadata.")
 
-    output_dir = Path(args.output_dir) if args.output_dir else (root / "artifacts" / "embedded" / args.run_name)
+    output_dir = (
+        Path(args.output_dir)
+        if args.output_dir
+        else (root / "artifacts" / "embedded" / args.run_name)
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     header_path = output_dir / f"{args.model_name}.h"

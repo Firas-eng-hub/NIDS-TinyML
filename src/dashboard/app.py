@@ -7,7 +7,6 @@ from flask import Flask, jsonify, render_template, request
 
 from .storage import EventStore
 
-
 store = EventStore()
 
 
@@ -47,7 +46,9 @@ def create_app() -> Flask:
         limit = int(request.args.get("limit", 100))
         class_filter = request.args.get("class")
         min_confidence = float(request.args.get("min_confidence", 0.0))
-        events = store.query_events(limit=limit, class_filter=class_filter, min_confidence=min_confidence)
+        events = store.query_events(
+            limit=limit, class_filter=class_filter, min_confidence=min_confidence
+        )
         return jsonify({"events": events})
 
     @app.get("/api/stats")

@@ -3,41 +3,13 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 
-from .data.loader import load_and_clean_data
+from .config import load_config, resolve_split_path
+from .data.replay import rebuild_training_dataframe
 from .features.preprocess import load_preprocessor, transform
-
-
-def load_config(config_path: Optional[str] = None) -> Tuple[dict, Path]:
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
-    return cfg, root
-
-
-def rebuild_training_dataframe(cfg: dict, root: Path) -> pd.DataFrame:
-    feature_order = list(cfg["features"]["fixed_list"])
-    raw_dir = root / cfg["data"]["raw_dir"]
-    random_state = int(cfg["train"]["random_state"])
-
-    df, _ = load_and_clean_data(str(raw_dir), int(cfg["data"]["chunksize"]), feature_order)
-
-    sample_frac = float(cfg["data"]["sample_frac"])
-    max_rows = int(cfg["data"]["max_rows"])
-
-    if sample_frac < 1.0:
-        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
-    if max_rows > 0 and len(df) > max_rows:
-        df = df.sample(n=max_rows, random_state=random_state).reset_index(drop=True)
-
-    return df.reset_index(drop=True)
 
 
 def load_test_indices(splits_path: Path) -> list[int]:
@@ -49,7 +21,9 @@ def load_test_indices(splits_path: Path) -> list[int]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--run_name", required=True, help="Run name used for preprocessing metadata")
+    parser.add_argument(
+        "--run_name", required=True, help="Run name used for preprocessing metadata"
+    )
     parser.add_argument(
         "--output",
         default=None,
@@ -69,16 +43,20 @@ def main() -> None:
 
     cfg, root = load_config(args.config)
     processed_dir = root / cfg["data"]["processed_dir"]
-    splits_path = processed_dir / "splits.json"
-    preprocessor_path = root / cfg["artifacts"]["scalers_dir"] / args.run_name / "preprocessor.json"
+    splits_path = resolve_split_path(cfg, root, args.run_name)
+    preprocessor_path = (
+        root / cfg["artifacts"]["scalers_dir"] / args.run_name / "preprocessor.json"
+    )
 
     if not splits_path.exists():
         raise FileNotFoundError(f"Split index file not found: {splits_path}")
     if args.preprocessed and not preprocessor_path.exists():
-        raise FileNotFoundError(f"Preprocessor not found for run '{args.run_name}': {preprocessor_path}")
+        raise FileNotFoundError(
+            f"Preprocessor not found for run '{args.run_name}': {preprocessor_path}"
+        )
 
     print("Rebuilding cleaned dataset...")
-    df = rebuild_training_dataframe(cfg, root)
+    df = rebuild_training_dataframe(cfg, root, args.run_name)
     test_indices = load_test_indices(splits_path)
     test_df = df.iloc[test_indices].reset_index(drop=True)
 

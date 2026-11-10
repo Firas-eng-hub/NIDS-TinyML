@@ -1,14 +1,9 @@
-pandas
-numpy
-scikit-learn
-skl2onnx
-onnxruntime
-emlearn
-matplotlib
-flask
-requests
-pyyaml
-joblib
-xgboost==2.1.4
-scapy
-pyserial
+# Core PC training and dashboard environment (validated with Python 3.13).
+numpy==2.4.2
+pandas==3.0.0
+scikit-learn==1.8.0
+matplotlib==3.10.8
+Flask==3.1.2
+requests==2.32.5
+PyYAML==6.0.3
+joblib==1.5.3

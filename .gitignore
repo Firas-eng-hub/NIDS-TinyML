@@ -1,11 +1,50 @@
+# Local datasets, processed data, split indices and captures: never publish.
+/data/
+*.csv
+*.CSV
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pcap
+*.pcapng
+*Wireshark*
+*wireshark*
+splits.json
+
+# Generated models, exports and experiment outputs remain local.
+/artifacts/
+*.joblib
+*.pkl
+*.pickle
+*.onnx
+/local_experiments/
+
+# No notebooks are published.
+/notebooks/
+*.ipynb
+.ipynb_checkpoints/
+
+# Environments and caches.
 venv/
+.venv/
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+.pycache/
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Ignore all CSV files
-*.csv
+# Credentials and machine-specific settings.
+.env
+.env.*
+!.env.example
+kaggle.json
+.claude/
+.vscode/
+.idea/
+*.log

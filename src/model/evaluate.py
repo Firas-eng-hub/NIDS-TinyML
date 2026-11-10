@@ -1,9 +1,8 @@
 """Evaluation utilities."""
 
-from typing import Dict, List
-
 import json
 import os
+from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,7 +19,9 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 
 
-def _align_proba_columns(y_proba: np.ndarray, model, class_names: List[str]) -> np.ndarray:
+def _align_proba_columns(
+    y_proba: np.ndarray, model, class_names: List[str]
+) -> np.ndarray:
     """Align probability columns to the requested class_names order."""
     if not hasattr(model, "classes_"):
         return y_proba
@@ -31,7 +32,9 @@ def _align_proba_columns(y_proba: np.ndarray, model, class_names: List[str]) -> 
     missing = [name for name in class_names if name not in cls_to_idx]
     if missing:
         missing_text = ", ".join(missing)
-        raise ValueError(f"Model probabilities do not contain expected classes: {missing_text}")
+        raise ValueError(
+            f"Model probabilities do not contain expected classes: {missing_text}"
+        )
 
     indices = [cls_to_idx[name] for name in class_names]
     return y_proba[:, indices]
@@ -45,6 +48,8 @@ def _plot_multiclass_roc(
     auc_by_class: Dict[str, float] = {}
 
     for idx, class_name in enumerate(class_names):
+        if len(np.unique(y_bin[:, idx])) < 2:
+            continue
         fpr, tpr, _ = roc_curve(y_bin[:, idx], y_proba[:, idx])
         roc_auc = float(auc(fpr, tpr))
         auc_by_class[class_name] = roc_auc
@@ -70,6 +75,8 @@ def _plot_multiclass_pr(
     fig, ax = plt.subplots(figsize=(9, 7))
 
     for idx, class_name in enumerate(class_names):
+        if not y_bin[:, idx].any():
+            continue
         precision, recall, _ = precision_recall_curve(y_bin[:, idx], y_proba[:, idx])
         pr_auc = float(auc(recall, precision))
         auc_by_class[class_name] = pr_auc
@@ -99,10 +106,31 @@ def evaluate_model(
     if y_proba is not None:
         y_proba = _align_proba_columns(y_proba, model, class_names)
 
-    acc = float(accuracy_score(y, y_pred))
-    macro_f1 = float(f1_score(y, y_pred, average="macro"))
+    return evaluate_predictions(y, y_pred, y_proba, class_names, reports_dir, prefix)
 
-    report = classification_report(y, y_pred, labels=class_names, output_dict=True, zero_division=0)
+
+def evaluate_predictions(
+    y,
+    y_pred,
+    y_proba,
+    class_names,
+    reports_dir,
+    prefix="test",
+    prediction_source="pc_model",
+    probability_source="pc_model",
+    extra_metadata=None,
+):
+    """Report hard predictions and explicitly identify the source of probability curves."""
+    if y_proba is not None and len(y_proba) != len(y):
+        raise ValueError("Probability rows must match accepted prediction rows")
+    acc = float(accuracy_score(y, y_pred))
+    macro_f1 = float(
+        f1_score(y, y_pred, average="macro", labels=class_names, zero_division=0)
+    )
+
+    report = classification_report(
+        y, y_pred, labels=class_names, output_dict=True, zero_division=0
+    )
     cm = confusion_matrix(y, y_pred, labels=class_names)
 
     os.makedirs(reports_dir, exist_ok=True)
@@ -110,6 +138,8 @@ def evaluate_model(
     report_path = os.path.join(reports_dir, f"{prefix}_report.json")
     payload = {
         "accuracy": acc,
+        "prediction_source": prediction_source,
+        "probability_source": probability_source,
         "macro_f1": macro_f1,
         "per_class": report,
         "confusion_matrix": cm.tolist(),
@@ -135,6 +165,9 @@ def evaluate_model(
         pr_auc_by_class = _plot_multiclass_pr(y, y_proba, class_names, pr_path)
         payload["roc_auc_by_class"] = roc_auc_by_class
         payload["pr_auc_by_class"] = pr_auc_by_class
+
+    if extra_metadata:
+        payload["evaluation"] = extra_metadata
 
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)

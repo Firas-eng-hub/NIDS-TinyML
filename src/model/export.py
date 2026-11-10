@@ -1,10 +1,9 @@
 """Model export utilities."""
 
-from typing import Dict
-
 import json
 import os
 from datetime import datetime
+from typing import Dict
 
 import joblib
 

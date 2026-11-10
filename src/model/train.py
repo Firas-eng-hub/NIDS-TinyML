@@ -19,7 +19,9 @@ def compute_weights(y: np.ndarray, class_names: list) -> Dict[str, float]:
             weight_map[cls] = 1.0
         return weight_map
 
-    weights = compute_class_weight(class_weight="balanced", classes=class_names_arr, y=y)
+    weights = compute_class_weight(
+        class_weight="balanced", classes=class_names_arr, y=y
+    )
     return {cls: float(w) for cls, w in zip(class_names_arr, weights)}
 
 
@@ -39,7 +41,9 @@ def train_model(
         return model, class_weights
 
     if model_type == "xgboost":
-        sample_weight = np.asarray([float(class_weights[str(label)]) for label in y_train], dtype=np.float32)
+        sample_weight = np.asarray(
+            [float(class_weights[str(label)]) for label in y_train], dtype=np.float32
+        )
         model.fit(X_train, y_train, sample_weight=sample_weight)
         return model, class_weights
 

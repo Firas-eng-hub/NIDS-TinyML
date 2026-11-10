@@ -1,8 +1,8 @@
 """Log1p + MinMax scaling utilities."""
 
+import json
 from typing import Dict, List
 
-import json
 import numpy as np
 import pandas as pd
 

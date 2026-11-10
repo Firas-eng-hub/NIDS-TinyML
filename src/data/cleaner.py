@@ -15,7 +15,9 @@ def _find_column_case_insensitive(columns: List[str], target: str) -> Optional[s
     return None
 
 
-def clean_chunk(df: pd.DataFrame, feature_list: List[str]) -> Tuple[pd.DataFrame, Dict[str, int]]:
+def clean_chunk(
+    df: pd.DataFrame, feature_list: List[str]
+) -> Tuple[pd.DataFrame, Dict[str, int]]:
     """Clean a raw IDS2018 chunk and return a filtered dataframe + stats."""
     df = df.copy()
     df.columns = [c.strip() for c in df.columns]

@@ -6,18 +6,10 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-import yaml
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
 
-
-def load_config(config_path: str = None):
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
-    return cfg, root
+from .config import load_config
 
 
 def resolve_run_paths(cfg: dict, root: Path, run_name: str):
@@ -36,14 +28,20 @@ def resolve_run_paths(cfg: dict, root: Path, run_name: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--run_name", required=True, help="Trained run to export, e.g. rf_run_03")
-    parser.add_argument("--input_name", default="float_input", help="ONNX input tensor name")
-    parser.add_argument("--target_opset", type=int, default=17, help="ONNX opset version to export")
+    parser.add_argument(
+        "--run_name", required=True, help="Trained run to export, e.g. rf_run_03"
+    )
+    parser.add_argument(
+        "--input_name", default="float_input", help="ONNX input tensor name"
+    )
+    parser.add_argument(
+        "--target_opset", type=int, default=17, help="ONNX opset version to export"
+    )
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
-    model_path, preprocessor_path, metadata_path, onnx_path, onnx_metadata_path = resolve_run_paths(
-        cfg, root, args.run_name
+    model_path, preprocessor_path, metadata_path, onnx_path, onnx_metadata_path = (
+        resolve_run_paths(cfg, root, args.run_name)
     )
 
     if not model_path.exists():
@@ -65,7 +63,9 @@ def main():
     if not original_class_names:
         original_class_names = [str(name) for name in metadata.get("class_names", [])]
     if not hasattr(model, "classes_"):
-        raise ValueError("Loaded model does not expose classes_; cannot export classifier labels.")
+        raise ValueError(
+            "Loaded model does not expose classes_; cannot export classifier labels."
+        )
     if not original_class_names:
         raise ValueError("No class names found in metadata or model.classes_.")
 

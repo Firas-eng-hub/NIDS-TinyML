@@ -30,7 +30,9 @@ class EventStore:
             events = [e for e in events if e.get("predicted_class") == class_filter]
 
         if min_confidence > 0:
-            events = [e for e in events if float(e.get("confidence", 0.0)) >= min_confidence]
+            events = [
+                e for e in events if float(e.get("confidence", 0.0)) >= min_confidence
+            ]
 
         events = sorted(events, key=lambda e: e.get("ts", ""), reverse=True)
         return events[:limit]

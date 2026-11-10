@@ -3,47 +3,22 @@
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
-import yaml
 
-from .data.loader import load_and_clean_data
+from .config import load_config, resolve_split_path
+from .data.replay import rebuild_training_dataframe
 from .features.preprocess import load_preprocessor, transform
 
 try:
     import onnxruntime as ort
 except ImportError as exc:  # pragma: no cover
-    raise ImportError("onnxruntime is required. Install it with: pip install onnxruntime") from exc
-
-
-def load_config(config_path: Optional[str] = None) -> Tuple[dict, Path]:
-    root = Path(__file__).resolve().parents[1]
-    if config_path is None:
-        config_path = root / "config" / "config.yaml"
-    with open(config_path, "r", encoding="utf-8") as handle:
-        cfg = yaml.safe_load(handle)
-    return cfg, root
-
-
-def rebuild_training_dataframe(cfg: dict, root: Path) -> pd.DataFrame:
-    feature_order = list(cfg["features"]["fixed_list"])
-    raw_dir = root / cfg["data"]["raw_dir"]
-    random_state = int(cfg["train"]["random_state"])
-
-    df, _ = load_and_clean_data(str(raw_dir), int(cfg["data"]["chunksize"]), feature_order)
-
-    sample_frac = float(cfg["data"]["sample_frac"])
-    max_rows = int(cfg["data"]["max_rows"])
-
-    if sample_frac < 1.0:
-        df = df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
-    if max_rows > 0 and len(df) > max_rows:
-        df = df.sample(n=max_rows, random_state=random_state).reset_index(drop=True)
-
-    return df.reset_index(drop=True)
+    raise ImportError(
+        "onnxruntime is required. Install it with: pip install onnxruntime"
+    ) from exc
 
 
 def load_test_split(df: pd.DataFrame, splits_path: Path) -> pd.DataFrame:
@@ -52,15 +27,21 @@ def load_test_split(df: pd.DataFrame, splits_path: Path) -> pd.DataFrame:
     return df.iloc[split_indices["test"]].reset_index(drop=True)
 
 
-def resolve_run_paths(cfg: dict, root: Path, run_name: str) -> Tuple[Path, Path, Path, Path]:
+def resolve_run_paths(
+    cfg: dict, root: Path, run_name: str
+) -> Tuple[Path, Path, Path, Path]:
     model_path = root / cfg["artifacts"]["models_dir"] / run_name / "model.joblib"
     onnx_path = root / cfg["artifacts"]["models_dir"] / run_name / "model.onnx"
-    preprocessor_path = root / cfg["artifacts"]["scalers_dir"] / run_name / "preprocessor.json"
+    preprocessor_path = (
+        root / cfg["artifacts"]["scalers_dir"] / run_name / "preprocessor.json"
+    )
     metadata_path = root / cfg["artifacts"]["metadata_dir"] / run_name / "metadata.json"
     return model_path, onnx_path, preprocessor_path, metadata_path
 
 
-def extract_onnx_outputs(session: ort.InferenceSession, input_name: str, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def extract_onnx_outputs(
+    session: ort.InferenceSession, input_name: str, x: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
     outputs = session.run(None, {input_name: x.astype(np.float32)})
 
     pred_ids = None
@@ -91,20 +72,26 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None, help="Path to config.yaml")
     parser.add_argument("--run_name", required=True, help="Run name, e.g. rf_run_04")
-    parser.add_argument("--limit", type=int, default=1000, help="How many test rows to compare")
-    parser.add_argument("--start_index", type=int, default=0, help="Offset inside the test split")
+    parser.add_argument(
+        "--limit", type=int, default=1000, help="How many test rows to compare"
+    )
+    parser.add_argument(
+        "--start_index", type=int, default=0, help="Offset inside the test split"
+    )
     args = parser.parse_args()
 
     cfg, root = load_config(args.config)
-    model_path, onnx_path, preprocessor_path, metadata_path = resolve_run_paths(cfg, root, args.run_name)
-    splits_path = root / cfg["data"]["processed_dir"] / "splits.json"
+    model_path, onnx_path, preprocessor_path, metadata_path = resolve_run_paths(
+        cfg, root, args.run_name
+    )
+    splits_path = resolve_split_path(cfg, root, args.run_name)
 
     for path in (model_path, onnx_path, preprocessor_path, metadata_path, splits_path):
         if not path.exists():
             raise FileNotFoundError(f"Required file not found: {path}")
 
     print("Rebuilding cleaned dataset...")
-    df = rebuild_training_dataframe(cfg, root)
+    df = rebuild_training_dataframe(cfg, root, args.run_name)
     test_df = load_test_split(df, splits_path)
 
     preprocessor = load_preprocessor(str(preprocessor_path))
@@ -125,7 +112,9 @@ def main() -> None:
     joblib_class_order = [str(name) for name in model.classes_]
     joblib_pred_labels = [str(name) for name in model.predict(x)]
     joblib_label_to_id = {name: idx for idx, name in enumerate(joblib_class_order)}
-    joblib_pred_ids = np.array([joblib_label_to_id[label] for label in joblib_pred_labels], dtype=int)
+    joblib_pred_ids = np.array(
+        [joblib_label_to_id[label] for label in joblib_pred_labels], dtype=int
+    )
 
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name

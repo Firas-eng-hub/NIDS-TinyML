@@ -1,7 +1,7 @@
 /* Add near the top of main.c */
 #include "app_nids.h"
 
-/* After MX_USARTx_UART_Init() and MX_X_CUBE_AI_Init() */
+/* After initializing the UART selected for the ST-LINK virtual COM port */
 NIDS_Init(&huart2);
 
 /* Inside while(1) */
